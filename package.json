@@ -1,0 +1,10 @@
+{
+  "name": "com.niuma.inventory",
+  "displayName": "NiumaInventory",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Inventory module protocols and data structures for Niuma modular game framework.",
+  "dependencies": {
+    "com.niuma.core": "1.0.0"
+  }
+}
