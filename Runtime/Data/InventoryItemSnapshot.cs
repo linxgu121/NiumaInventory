@@ -40,6 +40,18 @@ namespace NiumaInventory.Data
         public bool IsLocked;
 
         /// <summary>
+        /// 是否缺失物品定义。
+        /// 读档时 ItemId 找不到定义会被标记为 true，方便 UI 和逻辑层做保护。
+        /// </summary>
+        public bool IsMissing;
+
+        /// <summary>
+        /// 获得顺序。
+        /// 用于稳定排序，读档后应继承旧值。
+        /// </summary>
+        public long AcquiredOrder;
+
+        /// <summary>
         /// 轻量扩展数据。
         /// </summary>
         public InventoryCustomDataEntry[] CustomData = Array.Empty<InventoryCustomDataEntry>();

@@ -29,5 +29,25 @@ namespace NiumaInventory.Data
                 Value = Value
             };
         }
+
+        /// <summary>
+        /// 克隆扩展数据数组。
+        /// 用于运行时对象和存档快照之间做显式字段映射，避免共享引用。
+        /// </summary>
+        public static InventoryCustomDataEntry[] CloneArray(InventoryCustomDataEntry[] source)
+        {
+            if (source == null || source.Length == 0)
+            {
+                return Array.Empty<InventoryCustomDataEntry>();
+            }
+
+            var result = new InventoryCustomDataEntry[source.Length];
+            for (var i = 0; i < source.Length; i++)
+            {
+                result[i] = source[i]?.Clone();
+            }
+
+            return result;
+        }
     }
 }

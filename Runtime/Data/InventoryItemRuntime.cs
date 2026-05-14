@@ -43,8 +43,21 @@ namespace NiumaInventory.Data
         public bool IsLocked;
 
         /// <summary>
+        /// 是否缺失物品定义。
+        /// 缺失物品保留实例和数量，但默认不允许使用、交易、移动到特殊容器。
+        /// </summary>
+        public bool IsMissing;
+
+        /// <summary>
+        /// 获得顺序。
+        /// 新实例创建时递增生成，读档时沿用旧值，用于稳定的获得顺序排序。
+        /// </summary>
+        public long AcquiredOrder;
+
+        /// <summary>
         /// 运行时标记。
         /// 第一版只预留字段，不建议业务模块直接依赖具体位含义。
+        /// 该字段不进入存档快照，读档或运行中重建服务后会丢失。
         /// </summary>
         public int RuntimeFlags;
 
@@ -68,24 +81,10 @@ namespace NiumaInventory.Data
                 ContainerId = ContainerId,
                 SlotIndex = SlotIndex,
                 IsLocked = IsLocked,
-                CustomData = CloneCustomData(CustomData)
+                IsMissing = IsMissing,
+                AcquiredOrder = AcquiredOrder,
+                CustomData = InventoryCustomDataEntry.CloneArray(CustomData)
             };
-        }
-
-        private static InventoryCustomDataEntry[] CloneCustomData(InventoryCustomDataEntry[] source)
-        {
-            if (source == null || source.Length == 0)
-            {
-                return Array.Empty<InventoryCustomDataEntry>();
-            }
-
-            var result = new InventoryCustomDataEntry[source.Length];
-            for (var i = 0; i < source.Length; i++)
-            {
-                result[i] = source[i]?.Clone();
-            }
-
-            return result;
         }
     }
 }

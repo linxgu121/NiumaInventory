@@ -88,6 +88,12 @@ namespace NiumaInventory.Data
         public bool IsMissing;
 
         /// <summary>
+        /// 获得顺序。
+        /// UI 可用于稳定显示或调试，不应自行修改。
+        /// </summary>
+        public long AcquiredOrder;
+
+        /// <summary>
         /// 是否被锁定。
         /// </summary>
         public bool IsLocked;
@@ -121,5 +127,10 @@ namespace NiumaInventory.Data
         /// 是否允许分解。
         /// </summary>
         public bool CanDecompose;
+
+        /// <summary>
+        /// 是否允许邮寄。
+        /// </summary>
+        public bool CanMail;
     }
 }
