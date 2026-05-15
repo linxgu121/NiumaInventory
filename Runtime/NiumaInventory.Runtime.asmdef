@@ -1,7 +1,8 @@
 {
   "name": "NiumaInventory.Runtime",
   "references": [
-    "NiumaCore.Runtime"
+    "NiumaCore.Runtime",
+    "NiumaSave.Runtime"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
