@@ -393,6 +393,12 @@ namespace NiumaInventory.Controller
             return EnsureServiceReady() && _inventoryService.TryGetContainerSnapshot(containerId, out container);
         }
 
+        public bool TryFindFirstEmptySlot(string containerId, out int slotIndex)
+        {
+            slotIndex = -1;
+            return EnsureServiceReady() && _inventoryService.TryFindFirstEmptySlot(containerId, out slotIndex);
+        }
+
         public InventorySaveData ExportSnapshot()
         {
             return EnsureServiceReady() ? _inventoryService.ExportSnapshot() : new InventorySaveData();

@@ -37,6 +37,12 @@ namespace NiumaInventory.Service
         bool TryGetContainerSnapshot(string containerId, out InventoryContainerSnapshot container);
 
         /// <summary>
+        /// 尝试查找指定容器中的第一个空格。
+        /// 该查询不导出完整背包快照，适合装备、交互等模块在操作前做轻量定位。
+        /// </summary>
+        bool TryFindFirstEmptySlot(string containerId, out int slotIndex);
+
+        /// <summary>
         /// 校验是否可以添加物品。
         /// 只做校验，不修改背包数据。
         /// </summary>

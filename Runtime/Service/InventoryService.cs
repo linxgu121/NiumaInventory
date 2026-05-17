@@ -177,6 +177,12 @@ namespace NiumaInventory.Service
             return true;
         }
 
+        public bool TryFindFirstEmptySlot(string containerId, out int slotIndex)
+        {
+            slotIndex = FindFirstEmptySlot(containerId);
+            return slotIndex >= 0;
+        }
+
         public InventoryOperationResult CanAddItem(AddItemRequest request)
         {
             var plan = BuildAddPlan(request);
