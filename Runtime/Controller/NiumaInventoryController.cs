@@ -284,6 +284,19 @@ namespace NiumaInventory.Controller
         }
 
         /// <summary>
+        /// 校验一批添加请求是否可以按顺序连续放入背包，只检查规则，不修改背包数据。
+        /// </summary>
+        public InventoryOperationResult CanAddItemsBatch(InventoryAddBatchPreviewRequest request)
+        {
+            if (!EnsureServiceReady())
+            {
+                return StoreResult(InventoryOperationResult.Failed(InventoryFailureReason.InvalidRequest, "背包服务未初始化。"));
+            }
+
+            return StoreResult(_inventoryService.CanAddItemsBatch(request));
+        }
+
+        /// <summary>
         /// 校验当前请求是否可以移除物品，只检查规则，不修改背包数据。
         /// </summary>
         public InventoryOperationResult CanRemoveItem(RemoveItemRequest request)

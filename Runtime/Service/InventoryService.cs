@@ -191,6 +191,36 @@ namespace NiumaInventory.Service
                 : InventoryOperationResult.Failed(plan.FailureReason, plan.FailureMessage);
         }
 
+        public InventoryOperationResult CanAddItemsBatch(InventoryAddBatchPreviewRequest request)
+        {
+            if (request == null || request.Requests == null || request.Requests.Length == 0)
+            {
+                return InventoryOperationResult.Failed(InventoryFailureReason.InvalidRequest, "批量添加预检请求为空。");
+            }
+
+            var context = new AddBatchPlanContext();
+            var overflowItems = new List<InventoryItemSnapshot>();
+            for (var i = 0; i < request.Requests.Length; i++)
+            {
+                var addRequest = CloneAddRequestForBatch(request.Requests[i], request.AllowPartial, request.SourceModule);
+                var plan = BuildAddPlan(addRequest, context);
+                if (!plan.CanCommit)
+                {
+                    return InventoryOperationResult.Failed(plan.FailureReason, $"第 {i + 1} 个添加请求预检失败：{plan.FailureMessage}");
+                }
+
+                context.Apply(addRequest, plan);
+                if (plan.OverflowCount > 0)
+                {
+                    overflowItems.AddRange(CreateOverflowSnapshots(addRequest, plan.OverflowCount));
+                }
+            }
+
+            return InventoryOperationResult.Success(
+                overflowItems: overflowItems.ToArray(),
+                message: overflowItems.Count > 0 ? "批量预检部分产物无法放入背包。" : "可以批量添加物品。");
+        }
+
         public InventoryOperationResult CanRemoveItem(RemoveItemRequest request)
         {
             return ValidateRemoveRequest(request, out _);
@@ -826,7 +856,7 @@ namespace NiumaInventory.Service
                    && config.ContainerType == InventoryContainerType.Temporary;
         }
 
-        private AddPlan BuildAddPlan(AddItemRequest request)
+        private AddPlan BuildAddPlan(AddItemRequest request, AddBatchPlanContext batchContext = null)
         {
             var plan = new AddPlan();
             if (request == null || string.IsNullOrWhiteSpace(request.ItemId) || request.Count <= 0)
@@ -844,7 +874,7 @@ namespace NiumaInventory.Service
                 return plan.Fail(InventoryFailureReason.UnsupportedItemType, "物品类型不能为 None。");
             }
 
-            if (definition.IsUnique && GetItemCount(request.ItemId) > 0)
+            if (definition.IsUnique && GetItemCount(request.ItemId) + (batchContext?.GetPlannedItemCount(request.ItemId) ?? 0) > 0)
             {
                 return plan.Fail(InventoryFailureReason.UniqueItemAlreadyOwned, "唯一物品已经持有。");
             }
@@ -863,12 +893,13 @@ namespace NiumaInventory.Service
 
             if (request.TargetSlotIndex >= 0)
             {
-                TryPlanTargetSlot(request, definition, containers, plan, ref remaining);
+                TryPlanTargetSlot(request, definition, containers, plan, batchContext, ref remaining);
             }
             else
             {
-                TryPlanAutoStack(request, definition, containers, plan, ref remaining);
-                TryPlanEmptySlots(request, definition, containers, plan, ref remaining);
+                TryPlanAutoStack(request, definition, containers, plan, batchContext, ref remaining);
+                TryPlanPlannedStacks(request, definition, containers, plan, batchContext, ref remaining);
+                TryPlanEmptySlots(request, definition, containers, plan, batchContext, ref remaining);
             }
 
             var overflow = request.Count - plan.TotalPlaced;
@@ -884,7 +915,13 @@ namespace NiumaInventory.Service
                 string.IsNullOrWhiteSpace(plan.LastFailureMessage) ? "背包空间不足。" : plan.LastFailureMessage);
         }
 
-        private void TryPlanTargetSlot(AddItemRequest request, ItemDefinition definition, List<InventoryContainerRuntime> containers, AddPlan plan, ref int remaining)
+        private void TryPlanTargetSlot(
+            AddItemRequest request,
+            ItemDefinition definition,
+            List<InventoryContainerRuntime> containers,
+            AddPlan plan,
+            AddBatchPlanContext batchContext,
+            ref int remaining)
         {
             var container = containers[0];
             if (!CanContainerAccept(container, definition, out var reason, out var message))
@@ -900,21 +937,31 @@ namespace NiumaInventory.Service
             }
 
             var target = FindItemAt(container.ContainerId, request.TargetSlotIndex);
+            PlannedStack plannedStack = null;
+            if (batchContext != null)
+            {
+                batchContext.TryGetPlannedStackAt(container.ContainerId, request.TargetSlotIndex, out plannedStack);
+            }
             if (target != null && target.IsLocked)
             {
                 plan.RememberFailure(InventoryFailureReason.ItemLocked, "目标物品堆已锁定，不能自动增加数量。");
                 return;
             }
 
-            if (target != null && !string.Equals(target.ItemId, request.ItemId, StringComparison.Ordinal))
+            var targetItemId = target != null ? target.ItemId : plannedStack?.ItemId;
+            if (!string.IsNullOrWhiteSpace(targetItemId)
+                && !string.Equals(targetItemId, request.ItemId, StringComparison.Ordinal))
             {
                 plan.RememberFailure(InventoryFailureReason.SlotOccupied, "目标格子已被其他物品占用。");
                 return;
             }
 
             var maxStack = GetEffectiveMaxStack(definition);
-            var stackSpace = target == null ? maxStack : Math.Max(0, maxStack - target.Count);
-            var weightAllowed = GetAdditionalWeightCapacity(container, definition, plan.GetPlannedWeight(container.ContainerId));
+            var targetCount = target != null
+                ? target.Count + (batchContext?.GetPlannedCountForInstance(target.InstanceId) ?? 0)
+                : plannedStack?.Count ?? 0;
+            var stackSpace = string.IsNullOrWhiteSpace(targetItemId) ? maxStack : Math.Max(0, maxStack - targetCount);
+            var weightAllowed = GetAdditionalWeightCapacity(container, definition, GetTotalPlannedWeight(plan, batchContext, container.ContainerId));
             var count = Math.Min(remaining, Math.Min(stackSpace, weightAllowed));
             if (count <= 0)
             {
@@ -922,11 +969,18 @@ namespace NiumaInventory.Service
                 return;
             }
 
-            plan.AddPlacement(container.ContainerId, request.TargetSlotIndex, count, target?.InstanceId, GetItemWeight(definition) * count);
+            var targetInstanceId = target != null ? target.InstanceId : plannedStack?.VirtualInstanceId;
+            plan.AddPlacement(container.ContainerId, request.TargetSlotIndex, count, targetInstanceId, GetItemWeight(definition) * count);
             remaining -= count;
         }
 
-        private void TryPlanAutoStack(AddItemRequest request, ItemDefinition definition, List<InventoryContainerRuntime> containers, AddPlan plan, ref int remaining)
+        private void TryPlanAutoStack(
+            AddItemRequest request,
+            ItemDefinition definition,
+            List<InventoryContainerRuntime> containers,
+            AddPlan plan,
+            AddBatchPlanContext batchContext,
+            ref int remaining)
         {
             var maxStack = GetEffectiveMaxStack(definition);
             if (maxStack <= 1)
@@ -949,13 +1003,13 @@ namespace NiumaInventory.Service
                         || !string.Equals(item.ContainerId, container.ContainerId, StringComparison.Ordinal)
                         || !string.Equals(item.ItemId, request.ItemId, StringComparison.Ordinal)
                         || item.IsLocked
-                        || item.Count >= maxStack)
+                        || item.Count + (batchContext?.GetPlannedCountForInstance(item.InstanceId) ?? 0) >= maxStack)
                     {
                         continue;
                     }
 
-                    var stackSpace = maxStack - item.Count;
-                    var weightAllowed = GetAdditionalWeightCapacity(container, definition, plan.GetPlannedWeight(container.ContainerId));
+                    var stackSpace = maxStack - item.Count - (batchContext?.GetPlannedCountForInstance(item.InstanceId) ?? 0);
+                    var weightAllowed = GetAdditionalWeightCapacity(container, definition, GetTotalPlannedWeight(plan, batchContext, container.ContainerId));
                     var count = Math.Min(remaining, Math.Min(stackSpace, weightAllowed));
                     if (count <= 0)
                     {
@@ -972,7 +1026,67 @@ namespace NiumaInventory.Service
             }
         }
 
-        private void TryPlanEmptySlots(AddItemRequest request, ItemDefinition definition, List<InventoryContainerRuntime> containers, AddPlan plan, ref int remaining)
+        private void TryPlanPlannedStacks(
+            AddItemRequest request,
+            ItemDefinition definition,
+            List<InventoryContainerRuntime> containers,
+            AddPlan plan,
+            AddBatchPlanContext batchContext,
+            ref int remaining)
+        {
+            if (batchContext == null || remaining <= 0)
+            {
+                return;
+            }
+
+            var maxStack = GetEffectiveMaxStack(definition);
+            if (maxStack <= 1)
+            {
+                return;
+            }
+
+            for (var c = 0; c < containers.Count && remaining > 0; c++)
+            {
+                var container = containers[c];
+                if (!containerAllowsAutoStack(container) || !CanContainerAccept(container, definition, out _, out _))
+                {
+                    continue;
+                }
+
+                var plannedStacks = batchContext.PlannedStacks;
+                for (var i = 0; i < plannedStacks.Count && remaining > 0; i++)
+                {
+                    var stack = plannedStacks[i];
+                    if (stack == null
+                        || stack.IsExistingStack
+                        || !string.Equals(stack.ContainerId, container.ContainerId, StringComparison.Ordinal)
+                        || !string.Equals(stack.ItemId, request.ItemId, StringComparison.Ordinal)
+                        || stack.Count >= maxStack)
+                    {
+                        continue;
+                    }
+
+                    var stackSpace = maxStack - stack.Count;
+                    var weightAllowed = GetAdditionalWeightCapacity(container, definition, GetTotalPlannedWeight(plan, batchContext, container.ContainerId));
+                    var count = Math.Min(remaining, Math.Min(stackSpace, weightAllowed));
+                    if (count <= 0)
+                    {
+                        continue;
+                    }
+
+                    plan.AddPlacement(container.ContainerId, stack.SlotIndex, count, stack.VirtualInstanceId, GetItemWeight(definition) * count);
+                    remaining -= count;
+                }
+            }
+        }
+
+        private void TryPlanEmptySlots(
+            AddItemRequest request,
+            ItemDefinition definition,
+            List<InventoryContainerRuntime> containers,
+            AddPlan plan,
+            AddBatchPlanContext batchContext,
+            ref int remaining)
         {
             var maxStack = GetEffectiveMaxStack(definition);
             for (var c = 0; c < containers.Count && remaining > 0; c++)
@@ -986,12 +1100,14 @@ namespace NiumaInventory.Service
 
                 for (var slot = 0; slot < container.SlotCount && remaining > 0; slot++)
                 {
-                    if (FindItemAt(container.ContainerId, slot) != null || plan.IsSlotPlanned(container.ContainerId, slot))
+                    if (FindItemAt(container.ContainerId, slot) != null
+                        || plan.IsSlotPlanned(container.ContainerId, slot)
+                        || (batchContext?.IsSlotPlanned(container.ContainerId, slot) ?? false))
                     {
                         continue;
                     }
 
-                    var weightAllowed = GetAdditionalWeightCapacity(container, definition, plan.GetPlannedWeight(container.ContainerId));
+                    var weightAllowed = GetAdditionalWeightCapacity(container, definition, GetTotalPlannedWeight(plan, batchContext, container.ContainerId));
                     var count = Math.Min(remaining, Math.Min(maxStack, weightAllowed));
                     if (count <= 0)
                     {
@@ -1777,6 +1893,32 @@ namespace NiumaInventory.Service
             };
         }
 
+        private static AddItemRequest CloneAddRequestForBatch(AddItemRequest source, bool allowPartial, string batchSourceModule)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            return new AddItemRequest
+            {
+                ItemId = source.ItemId,
+                Count = source.Count,
+                TargetContainerId = source.TargetContainerId,
+                TargetSlotIndex = source.TargetSlotIndex,
+                AllowPartial = allowPartial,
+                CustomData = InventoryCustomDataEntry.CloneArray(source.CustomData),
+                SourceModule = string.IsNullOrWhiteSpace(source.SourceModule) ? batchSourceModule : source.SourceModule
+            };
+        }
+
+        private static float GetTotalPlannedWeight(AddPlan plan, AddBatchPlanContext batchContext, string containerId)
+        {
+            var currentPlanWeight = plan != null ? plan.GetPlannedWeight(containerId) : 0f;
+            var batchWeight = batchContext != null ? batchContext.GetPlannedWeight(containerId) : 0f;
+            return currentPlanWeight + batchWeight;
+        }
+
         private string GenerateUniqueInstanceId()
         {
             string id;
@@ -1807,12 +1949,177 @@ namespace NiumaInventory.Service
             }
         }
 
+        private sealed class AddBatchPlanContext
+        {
+            private readonly Dictionary<string, float> _plannedWeightByContainer =
+                new Dictionary<string, float>(StringComparer.Ordinal);
+            private readonly Dictionary<string, int> _plannedCountByItemId =
+                new Dictionary<string, int>(StringComparer.Ordinal);
+            private readonly Dictionary<string, int> _plannedCountByInstanceId =
+                new Dictionary<string, int>(StringComparer.Ordinal);
+            private readonly Dictionary<string, PlannedStack> _plannedStackBySlot =
+                new Dictionary<string, PlannedStack>(StringComparer.Ordinal);
+            private readonly HashSet<string> _plannedSlots =
+                new HashSet<string>(StringComparer.Ordinal);
+            private int _nextVirtualId = 1;
+
+            public readonly List<PlannedStack> PlannedStacks = new List<PlannedStack>();
+
+            public void Apply(AddItemRequest request, AddPlan plan)
+            {
+                if (request == null || plan == null || !plan.CanCommit)
+                {
+                    return;
+                }
+
+                AddPlannedItemCount(request.ItemId, plan.TotalPlaced);
+                for (var i = 0; i < plan.Placements.Count; i++)
+                {
+                    var placement = plan.Placements[i];
+                    AddWeight(placement.ContainerId, plan.GetPlacementWeight(i));
+
+                    if (!string.IsNullOrWhiteSpace(placement.TargetInstanceId))
+                    {
+                        if (_plannedStackBySlot.TryGetValue(CreateSlotKey(placement.ContainerId, placement.SlotIndex), out var plannedStack)
+                            && string.Equals(plannedStack.VirtualInstanceId, placement.TargetInstanceId, StringComparison.Ordinal))
+                        {
+                            plannedStack.Count += placement.Count;
+                            continue;
+                        }
+
+                        AddPlannedInstanceCount(placement.TargetInstanceId, placement.Count);
+                        continue;
+                    }
+
+                    var stack = new PlannedStack(
+                        CreateVirtualInstanceId(),
+                        request.ItemId,
+                        placement.ContainerId,
+                        placement.SlotIndex,
+                        placement.Count,
+                        false);
+                    PlannedStacks.Add(stack);
+                    var slotKey = CreateSlotKey(placement.ContainerId, placement.SlotIndex);
+                    _plannedStackBySlot[slotKey] = stack;
+                    _plannedSlots.Add(slotKey);
+                }
+            }
+
+            public int GetPlannedItemCount(string itemId)
+            {
+                return !string.IsNullOrWhiteSpace(itemId) && _plannedCountByItemId.TryGetValue(itemId, out var count)
+                    ? count
+                    : 0;
+            }
+
+            public int GetPlannedCountForInstance(string instanceId)
+            {
+                return !string.IsNullOrWhiteSpace(instanceId) && _plannedCountByInstanceId.TryGetValue(instanceId, out var count)
+                    ? count
+                    : 0;
+            }
+
+            public float GetPlannedWeight(string containerId)
+            {
+                return !string.IsNullOrWhiteSpace(containerId) && _plannedWeightByContainer.TryGetValue(containerId, out var weight)
+                    ? weight
+                    : 0f;
+            }
+
+            public bool IsSlotPlanned(string containerId, int slotIndex)
+            {
+                return _plannedSlots.Contains(CreateSlotKey(containerId, slotIndex));
+            }
+
+            public bool TryGetPlannedStackAt(string containerId, int slotIndex, out PlannedStack stack)
+            {
+                return _plannedStackBySlot.TryGetValue(CreateSlotKey(containerId, slotIndex), out stack);
+            }
+
+            private void AddWeight(string containerId, float weight)
+            {
+                if (string.IsNullOrWhiteSpace(containerId) || weight <= 0f)
+                {
+                    return;
+                }
+
+                if (!_plannedWeightByContainer.ContainsKey(containerId))
+                {
+                    _plannedWeightByContainer[containerId] = 0f;
+                }
+
+                _plannedWeightByContainer[containerId] += weight;
+            }
+
+            private void AddPlannedItemCount(string itemId, int count)
+            {
+                if (string.IsNullOrWhiteSpace(itemId) || count <= 0)
+                {
+                    return;
+                }
+
+                if (!_plannedCountByItemId.ContainsKey(itemId))
+                {
+                    _plannedCountByItemId[itemId] = 0;
+                }
+
+                _plannedCountByItemId[itemId] += count;
+            }
+
+            private void AddPlannedInstanceCount(string instanceId, int count)
+            {
+                if (string.IsNullOrWhiteSpace(instanceId) || count <= 0)
+                {
+                    return;
+                }
+
+                if (!_plannedCountByInstanceId.ContainsKey(instanceId))
+                {
+                    _plannedCountByInstanceId[instanceId] = 0;
+                }
+
+                _plannedCountByInstanceId[instanceId] += count;
+            }
+
+            private string CreateVirtualInstanceId()
+            {
+                return "__batch_preview_" + _nextVirtualId++;
+            }
+        }
+
+        private sealed class PlannedStack
+        {
+            public readonly string VirtualInstanceId;
+            public readonly string ItemId;
+            public readonly string ContainerId;
+            public readonly int SlotIndex;
+            public readonly bool IsExistingStack;
+            public int Count;
+
+            public PlannedStack(
+                string virtualInstanceId,
+                string itemId,
+                string containerId,
+                int slotIndex,
+                int count,
+                bool isExistingStack)
+            {
+                VirtualInstanceId = virtualInstanceId;
+                ItemId = itemId;
+                ContainerId = containerId;
+                SlotIndex = slotIndex;
+                Count = count;
+                IsExistingStack = isExistingStack;
+            }
+        }
+
         private sealed class AddPlan
         {
             private readonly Dictionary<string, float> _plannedWeightByContainer =
                 new Dictionary<string, float>(StringComparer.Ordinal);
             private readonly HashSet<string> _plannedSlots =
                 new HashSet<string>(StringComparer.Ordinal);
+            private readonly List<float> _placementWeights = new List<float>();
 
             public readonly List<Placement> Placements = new List<Placement>();
             public bool CanCommit;
@@ -1840,6 +2147,7 @@ namespace NiumaInventory.Service
             public void AddPlacement(string containerId, int slotIndex, int count, string targetInstanceId, float weight)
             {
                 Placements.Add(new Placement(containerId, slotIndex, count, targetInstanceId));
+                _placementWeights.Add(weight);
                 TotalPlaced += count;
 
                 if (!_plannedWeightByContainer.ContainsKey(containerId))
@@ -1862,6 +2170,11 @@ namespace NiumaInventory.Service
             public bool IsSlotPlanned(string containerId, int slotIndex)
             {
                 return _plannedSlots.Contains(CreateSlotKey(containerId, slotIndex));
+            }
+
+            public float GetPlacementWeight(int index)
+            {
+                return index >= 0 && index < _placementWeights.Count ? _placementWeights[index] : 0f;
             }
         }
 

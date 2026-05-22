@@ -49,6 +49,12 @@ namespace NiumaInventory.Service
         InventoryOperationResult CanAddItem(AddItemRequest request);
 
         /// <summary>
+        /// 校验一批 AddItem 请求是否可以按顺序连续放入背包。
+        /// 只做预检，不修改背包数据；用于合成、多产物奖励等需要整批成功或整批失败的场景。
+        /// </summary>
+        InventoryOperationResult CanAddItemsBatch(InventoryAddBatchPreviewRequest request);
+
+        /// <summary>
         /// 校验是否可以移除物品。
         /// 只做校验，不修改背包数据。
         /// </summary>
