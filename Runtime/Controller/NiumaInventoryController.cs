@@ -116,6 +116,18 @@ namespace NiumaInventory.Controller
         public int InventoryRevision => _inventoryService != null ? _inventoryService.Revision : 0;
 
         /// <summary>
+        /// 当前物品静态定义配置。
+        /// UI 桥接层可只读使用，正式修改请通过 SetItemDefinitions。
+        /// </summary>
+        public ItemDefinition[] ItemDefinitions => itemDefinitions ?? Array.Empty<ItemDefinition>();
+
+        /// <summary>
+        /// 当前容器静态配置。
+        /// UI 桥接层可只读使用，正式修改请通过 SetContainerConfigs。
+        /// </summary>
+        public InventoryContainerConfig[] ContainerConfigs => containerConfigs ?? Array.Empty<InventoryContainerConfig>();
+
+        /// <summary>
         /// 最近一次调试或代理操作结果。
         /// </summary>
         public InventoryOperationResult LastOperationResult { get; private set; }
@@ -410,6 +422,56 @@ namespace NiumaInventory.Controller
         {
             slotIndex = -1;
             return EnsureServiceReady() && _inventoryService.TryFindFirstEmptySlot(containerId, out slotIndex);
+        }
+
+        /// <summary>
+        /// 按物品 ID 查找静态定义。
+        /// UI 桥接层用它补齐显示名称、图标、品质和基础规则。
+        /// </summary>
+        public bool TryGetItemDefinition(string itemId, out ItemDefinition definition)
+        {
+            definition = null;
+            if (string.IsNullOrWhiteSpace(itemId) || itemDefinitions == null)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < itemDefinitions.Length; i++)
+            {
+                var candidate = itemDefinitions[i];
+                if (candidate != null && string.Equals(candidate.ItemId, itemId, StringComparison.Ordinal))
+                {
+                    definition = candidate;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 按容器 ID 查找静态配置。
+        /// UI 桥接层用它补齐容器显示名称和类型信息。
+        /// </summary>
+        public bool TryGetContainerConfig(string containerId, out InventoryContainerConfig config)
+        {
+            config = null;
+            if (string.IsNullOrWhiteSpace(containerId) || containerConfigs == null)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < containerConfigs.Length; i++)
+            {
+                var candidate = containerConfigs[i];
+                if (candidate != null && string.Equals(candidate.ContainerId, containerId, StringComparison.Ordinal))
+                {
+                    config = candidate;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public InventorySaveData ExportSnapshot()
