@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using NiumaInventory.Data;
 using NiumaInventory.Request;
 
@@ -35,6 +36,18 @@ namespace NiumaInventory.Service
         /// 尝试获取容器快照。
         /// </summary>
         bool TryGetContainerSnapshot(string containerId, out InventoryContainerSnapshot container);
+
+        /// <summary>
+        /// 复制当前容器快照到调用方提供的缓存列表。
+        /// 该接口用于 UI、调试面板等只读展示场景，避免为了刷新界面创建完整 InventorySaveData。
+        /// </summary>
+        void CopyContainerSnapshots(List<InventoryContainerSnapshot> output);
+
+        /// <summary>
+        /// 复制当前物品快照到调用方提供的缓存列表。
+        /// 调用方不要长期持有返回对象作为存档事实，正式存档仍应走 ExportSnapshot。
+        /// </summary>
+        void CopyItemSnapshots(List<InventoryItemSnapshot> output);
 
         /// <summary>
         /// 尝试查找指定容器中的第一个空格。

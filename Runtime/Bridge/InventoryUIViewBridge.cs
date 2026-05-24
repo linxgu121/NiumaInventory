@@ -56,6 +56,8 @@ namespace NiumaInventory.Bridge
         private readonly List<InventoryContainerViewData> _containerBuffer = new List<InventoryContainerViewData>();
         private readonly List<InventoryItemViewData> _itemBuffer = new List<InventoryItemViewData>();
         private readonly List<InventoryItemViewData> _containerItemBuffer = new List<InventoryItemViewData>();
+        private readonly List<InventoryContainerSnapshot> _containerSnapshotBuffer = new List<InventoryContainerSnapshot>();
+        private readonly List<InventoryItemSnapshot> _itemSnapshotBuffer = new List<InventoryItemSnapshot>();
         private IInventoryUIReceiver _receiver;
         private int _observedRevision = -1;
         private InventoryPanelViewData _lastPanelData;
@@ -184,19 +186,17 @@ namespace NiumaInventory.Bridge
 
         private InventoryPanelViewData BuildPanelViewData(int revision)
         {
-            // TODO: 当前桥接层暂用 ExportSnapshot 作为 UI 数据源，方便复用存档快照结构。
-            // 后续背包容量变大后，应替换为 InventoryService 的轻量只读查询，避免 UI 刷新时做深拷贝。
-            var snapshot = inventoryController.ExportSnapshot();
-            var containers = snapshot != null ? snapshot.Containers : null;
-            var items = snapshot != null ? snapshot.Items : null;
+            // UI 刷新只走轻量只读查询，不调用 ExportSnapshot，避免把存档导出路径当作界面数据源。
+            inventoryController.CopyContainerSnapshots(_containerSnapshotBuffer);
+            inventoryController.CopyItemSnapshots(_itemSnapshotBuffer);
 
-            BuildAllItemViewData(items);
+            BuildAllItemViewData(_itemSnapshotBuffer);
 
             _containerBuffer.Clear();
             InventoryContainerViewData selectedContainer = null;
-            for (var i = 0; containers != null && i < containers.Length; i++)
+            for (var i = 0; i < _containerSnapshotBuffer.Count; i++)
             {
-                var container = containers[i];
+                var container = _containerSnapshotBuffer[i];
                 if (!ShouldShowContainer(container))
                 {
                     continue;
@@ -241,10 +241,10 @@ namespace NiumaInventory.Bridge
             };
         }
 
-        private void BuildAllItemViewData(InventoryItemSnapshot[] items)
+        private void BuildAllItemViewData(IReadOnlyList<InventoryItemSnapshot> items)
         {
             _itemBuffer.Clear();
-            for (var i = 0; items != null && i < items.Length; i++)
+            for (var i = 0; items != null && i < items.Count; i++)
             {
                 var item = items[i];
                 if (item == null || string.IsNullOrWhiteSpace(item.InstanceId))

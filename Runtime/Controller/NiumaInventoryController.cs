@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using NiumaCore.Module;
 using NiumaInventory.Config;
 using NiumaInventory.Data;
@@ -416,6 +417,36 @@ namespace NiumaInventory.Controller
         {
             container = null;
             return EnsureServiceReady() && _inventoryService.TryGetContainerSnapshot(containerId, out container);
+        }
+
+        /// <summary>
+        /// 复制容器快照到调用方缓存列表。
+        /// UI 桥接层优先使用该轻量查询，不要为了刷新界面调用 ExportSnapshot。
+        /// </summary>
+        public void CopyContainerSnapshots(List<InventoryContainerSnapshot> output)
+        {
+            if (!EnsureServiceReady())
+            {
+                output?.Clear();
+                return;
+            }
+
+            _inventoryService.CopyContainerSnapshots(output);
+        }
+
+        /// <summary>
+        /// 复制物品快照到调用方缓存列表。
+        /// 该方法只读背包状态，不创建完整存档对象。
+        /// </summary>
+        public void CopyItemSnapshots(List<InventoryItemSnapshot> output)
+        {
+            if (!EnsureServiceReady())
+            {
+                output?.Clear();
+                return;
+            }
+
+            _inventoryService.CopyItemSnapshots(output);
         }
 
         public bool TryFindFirstEmptySlot(string containerId, out int slotIndex)

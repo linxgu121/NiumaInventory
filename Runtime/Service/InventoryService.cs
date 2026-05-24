@@ -177,6 +177,48 @@ namespace NiumaInventory.Service
             return true;
         }
 
+        public void CopyContainerSnapshots(List<InventoryContainerSnapshot> output)
+        {
+            if (output == null)
+            {
+                return;
+            }
+
+            output.Clear();
+            for (var i = 0; i < _containerOrder.Count; i++)
+            {
+                var containerId = _containerOrder[i];
+                if (string.IsNullOrWhiteSpace(containerId)
+                    || !_containers.TryGetValue(containerId, out var runtime)
+                    || runtime == null)
+                {
+                    continue;
+                }
+
+                output.Add(runtime.ToSnapshot());
+            }
+        }
+
+        public void CopyItemSnapshots(List<InventoryItemSnapshot> output)
+        {
+            if (output == null)
+            {
+                return;
+            }
+
+            output.Clear();
+            foreach (var pair in _items)
+            {
+                var runtime = pair.Value;
+                if (runtime == null || string.IsNullOrWhiteSpace(runtime.InstanceId))
+                {
+                    continue;
+                }
+
+                output.Add(runtime.ToSnapshot());
+            }
+        }
+
         public bool TryFindFirstEmptySlot(string containerId, out int slotIndex)
         {
             slotIndex = FindFirstEmptySlot(containerId);
