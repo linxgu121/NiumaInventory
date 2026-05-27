@@ -51,7 +51,7 @@ namespace NiumaInventory.SaveBridge
         /// 背包数据修订号。
         /// NiumaSave 通过该值判断背包模块是否发生变化。
         /// </summary>
-        public int Revision => inventoryController != null ? inventoryController.InventoryRevision : 0;
+        public long Revision => inventoryController != null ? inventoryController.InventoryRevision : 0L;
 
         private void Awake()
         {
